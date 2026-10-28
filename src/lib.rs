@@ -66,3 +66,5 @@ mod visual_regression_tests;
 
 pub mod i18n;
 mod i18n_format;
+
+pub mod bitwarden_enroll;

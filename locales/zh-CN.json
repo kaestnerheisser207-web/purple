@@ -452,5 +452,6 @@
   " pick ": " 选择 ",
   " cycle ": " 切换 ",
   " cancel ": " 取消 ",
-  " next/prev host ": " 下一台/上一台 "
+  " next/prev host ": " 下一台/上一台 ",
+  "bw: = save on first login": "bw: 留空，首次连接保存"
 }

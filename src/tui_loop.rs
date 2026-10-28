@@ -503,7 +503,7 @@ fn handle_pending_connect(
         .iter()
         .find(|h| h.alias == alias)
         .cloned();
-    let askpass = host_askpass.or_else(|| preferences::load_askpass_default(app.env().paths()));
+    let mut askpass = host_askpass.or_else(|| preferences::load_askpass_default(app.env().paths()));
     let has_active_tunnel = app.tunnels.active_contains(&alias);
     let use_tmux = connection::is_in_tmux(app.env()) && askpass.is_none();
     let launcher = crate::ssh_launcher::SshLauncher::resolve(app.env());
@@ -589,6 +589,24 @@ fn handle_pending_connect(
     ensure_proton_login(&env, askpass.as_deref());
     if let Some(token) = ensure_bw_session(&env, app.bw_session.as_deref(), askpass.as_deref()) {
         app.bw_session = Some(token);
+    }
+    match crate::bitwarden_enroll::prepare(
+        &env,
+        app.reload.config_path(),
+        &alias,
+        &mut askpass,
+        app.bw_session.as_deref(),
+    ) {
+        Ok(true) => {}
+        outcome => {
+            terminal.enter()?;
+            events.resume();
+            match outcome {
+                Err(e) => app.notify_error(e.to_string()),
+                _ => app.notify_warning("已取消 Bitwarden 密码保存"),
+            }
+            return Ok(());
+        }
     }
     ensure_keychain_password(&env, &alias, askpass.as_deref());
     print!("{}", crate::messages::cli::beaming_up(&alias));

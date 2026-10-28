@@ -455,14 +455,15 @@ fn render_password_picker_overlay(frame: &mut Frame, app: &mut App) {
     let items: Vec<ListItem> = sources
         .iter()
         .map(|src| {
-            let hint_width = src.hint.len();
+            let hint = crate::i18n::text(src.hint);
+            let hint_width = hint.width();
             let label_width = inner_width.saturating_sub(hint_width).saturating_sub(1);
             let line = Line::from(vec![
                 Span::styled(
                     format!(" {:<width$}", src.label, width = label_width),
                     theme::bold(),
                 ),
-                Span::styled(src.hint, theme::muted()),
+                Span::styled(hint, theme::muted()),
             ]);
             ListItem::new(line)
         })
