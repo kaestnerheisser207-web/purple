@@ -21,7 +21,7 @@ pub fn global_default_set(label: &str) -> String {
 }
 
 pub fn password_source_set(label: &str) -> String {
-    format!("Password source set to {}.", label)
+    crate::tformat!("Password source set to {}.", label)
 }
 
 pub fn complete_path(label: &str) -> String {

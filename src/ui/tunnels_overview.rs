@@ -337,7 +337,7 @@ fn compute_columns(rows: &[TunnelRow], content_w: usize) -> Columns {
         .map(|r| r.last_text.width())
         .max()
         .unwrap_or(0)
-        .max("LAST".width()); // header label always fits
+        .max(crate::i18n::text("LAST").width()); // header label always fits
     let last = last_content.min(LAST_W);
 
     // Layout:
@@ -394,7 +394,11 @@ fn render_header(frame: &mut Frame, area: Rect, cols: &Columns, sort_mode: Tunne
     let alpha_sort = matches!(sort_mode, TunnelSortMode::AlphaHostname);
     let recent_sort = matches!(sort_mode, TunnelSortMode::MostRecent);
 
-    let alias_label = if alpha_sort { "NAME \u{25BE}" } else { "NAME" };
+    let alias_label = if alpha_sort {
+        "NAME \u{25BE}"
+    } else {
+        crate::i18n::text("NAME")
+    };
 
     // Include HIGHLIGHT_W so column titles line up with row content. The List
     // widget reserves a column for highlight_symbol on each row but the header
@@ -594,11 +598,14 @@ pub fn render(frame: &mut Frame, app: &mut App, anim: &mut crate::animation::Ani
     frame.render_widget(block, list_block_area);
 
     if rows.is_empty() {
-        let hints = [("a", crate::messages::TAB_EMPTY_TUNNELS_HINT_ADD)];
+        let hints = [(
+            "a",
+            crate::i18n::text(crate::messages::TAB_EMPTY_TUNNELS_HINT_ADD),
+        )];
         let empty = design::TabEmpty {
-            card_title: "Tunnels",
-            headline: crate::messages::TAB_EMPTY_TUNNELS_HEADLINE,
-            explainer: crate::messages::TAB_EMPTY_TUNNELS_EXPLAINER,
+            card_title: crate::i18n::text("Tunnels"),
+            headline: crate::i18n::text(crate::messages::TAB_EMPTY_TUNNELS_HEADLINE),
+            explainer: crate::i18n::text(crate::messages::TAB_EMPTY_TUNNELS_EXPLAINER),
             hints: &hints,
         };
         design::render_tab_empty(frame, list_block_area, &empty);
@@ -792,9 +799,9 @@ fn render_footer(frame: &mut Frame, area: Rect, app: &mut App, rows: &[TunnelRow
         // a footer prompt under the overview.
         design::render_destructive_popup(
             frame,
-            crate::messages::CONFIRM_TUNNEL_DELETE_TITLE,
-            crate::messages::CONFIRM_TUNNEL_DELETE_QUESTION,
-            crate::messages::CONFIRM_TUNNEL_DELETE_DETAIL,
+            crate::i18n::text(crate::messages::CONFIRM_TUNNEL_DELETE_TITLE),
+            crate::i18n::text(crate::messages::CONFIRM_TUNNEL_DELETE_QUESTION),
+            crate::i18n::text(crate::messages::CONFIRM_TUNNEL_DELETE_DETAIL),
             "delete",
             "keep",
             app,
@@ -821,9 +828,9 @@ fn render_footer(frame: &mut Frame, area: Rect, app: &mut App, rows: &[TunnelRow
     use crate::messages::footer as fl;
     let spans = design::Footer::new()
         .primary("Enter", primary_label)
-        .action("/", fl::ACTION_SEARCH)
-        .action("s", fl::ACTION_SORT)
-        .action(":", fl::ACTION_JUMP)
+        .action("/", crate::i18n::text(fl::ACTION_SEARCH))
+        .action("s", crate::i18n::text(fl::ACTION_SORT))
+        .action(":", crate::i18n::text(fl::ACTION_JUMP))
         .into_spans();
     super::render_footer_with_help(frame, area, spans, app);
 }

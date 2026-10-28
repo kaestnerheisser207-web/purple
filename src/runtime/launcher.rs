@@ -27,6 +27,15 @@ use crate::{
 /// when the chosen mode exits (subcommand return, direct-connect exit,
 /// TUI quit).
 pub fn run(cli: Cli, env: std::sync::Arc<crate::runtime::env::Env>) -> Result<()> {
+    crate::i18n::initialize(
+        cli.lang.as_deref(),
+        env.paths().map(|p| p.config_dir().join("language")),
+    )?;
+    if let Some(language) = &cli.set_language {
+        crate::i18n::save(language)?;
+        println!("Language / 语言: {language}");
+        return Ok(());
+    }
     let migration = seed_layout_and_theme(&env);
 
     // Determine if this is a CLI subcommand (log to stderr too) or TUI (file only)
@@ -476,7 +485,7 @@ fn run_positional_alias(
 fn print_host_list(config: &SshConfigFile) {
     let entries = config.host_entries();
     if entries.is_empty() {
-        println!("{}", messages::cli::NO_HOSTS);
+        println!("{}", crate::i18n::text(messages::cli::NO_HOSTS));
         return;
     }
     for host in &entries {

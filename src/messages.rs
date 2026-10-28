@@ -366,7 +366,7 @@ pub mod update {
     /// the trailing-space convention of the other STEP_* constants so
     /// the next print resumes on the same line.
     pub fn step_downloading(version: &str) -> String {
-        format!("  Downloading v{}... ", version)
+        crate::tformat!("  Downloading v{}... ", version)
     }
 
     /// Indented sudo warning rendered before the download step. The
