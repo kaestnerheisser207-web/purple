@@ -11,6 +11,7 @@
 
 pub mod container;
 pub mod host;
+pub mod language;
 pub mod picker;
 pub mod ppl;
 pub mod provider;

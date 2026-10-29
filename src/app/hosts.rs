@@ -328,14 +328,16 @@ impl App {
                 .ssh_config
                 .host_entries()
                 .into_iter()
-                .find(|host| host.alias == alias)
-                .expect("saved host exists");
-            crate::bitwarden_enroll::queue_rename(
-                &self.env,
-                self.reload.config_path(),
-                &old_entry,
-                &saved_entry,
-            )
+                .find(|host| host.alias == alias);
+            match saved_entry {
+                Some(saved_entry) => crate::bitwarden_enroll::queue_rename(
+                    &self.env,
+                    self.reload.config_path(),
+                    &old_entry,
+                    &saved_entry,
+                ),
+                None => Err(anyhow::anyhow!(crate::messages::ppl::HOST_SYNC_MISSING)),
+            }
         } else {
             Ok(false)
         };
@@ -353,8 +355,8 @@ impl App {
         }
         self.refresh_cert_cache(&alias);
         match rename_result {
-            Err(e) => Ok(format!("主机已改名，但无法登记 Bitwarden 名称同步：{e}")),
-            Ok(true) => Ok(format!("主机已改名，正在同步 Bitwarden：{alias}")),
+            Err(e) => Ok(format!("主机已保存，但无法登记 Bitwarden 名称同步：{e}")),
+            Ok(true) => Ok(format!("主机已保存，正在同步 Bitwarden：{alias}")),
             Ok(false) => Ok(format!("{} got a makeover.", alias)),
         }
     }
