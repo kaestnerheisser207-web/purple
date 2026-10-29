@@ -59,6 +59,13 @@ jobs:
       - name: Check formatting
         run: cargo fmt --check
 
+      - name: Check repository conventions
+        run: |
+          bash scripts/check-design-system.sh
+          bash scripts/check-messages.sh
+          bash scripts/check-keybindings.sh
+          bash scripts/check-conventions.sh
+
       - name: Run tests
         run: cargo test --locked
 

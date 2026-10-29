@@ -12,6 +12,7 @@
 pub mod container;
 pub mod host;
 pub mod picker;
+pub mod ppl;
 pub mod provider;
 pub mod snippet;
 pub mod tunnel;

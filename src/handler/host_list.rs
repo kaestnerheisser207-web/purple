@@ -333,7 +333,7 @@ pub(super) fn handle_main_key(app: &mut App, key: KeyEvent, events_tx: &mpsc::Se
         }
         KeyCode::Char('L') => {
             if let Err(e) = crate::i18n::toggle() {
-                app.notify_error(format!("Language: {e}"));
+                app.notify_error(crate::messages::ppl::language_error(&e));
             }
         }
         KeyCode::Char('g') => actions::cycle_group_by(app),

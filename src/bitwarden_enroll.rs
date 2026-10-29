@@ -427,7 +427,7 @@ pub fn prepare(
         if source.as_deref().is_some_and(|s| s.starts_with("bw:")) {
             match sync_pending_rename(env, config, alias, session) {
                 Ok(Some(message)) => eprintln!("{message}"),
-                Err(e) => eprintln!("Bitwarden 名称尚未同步，下次连接会重试：{e}"),
+                Err(e) => eprintln!("{}", crate::messages::ppl::rename_pending(&e)),
                 Ok(None) => {}
             }
         }
@@ -450,7 +450,7 @@ pub fn prepare(
     })?;
     if let Some(binding) = result {
         *source = Some(binding);
-        eprintln!("Bitwarden 密码已保存并绑定，正在连接…");
+        eprintln!("{}", crate::messages::ppl::PASSWORD_BOUND);
         Ok(true)
     } else {
         Ok(false)

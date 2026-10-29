@@ -33,7 +33,7 @@ pub fn run(cli: Cli, env: std::sync::Arc<crate::runtime::env::Env>) -> Result<()
     )?;
     if let Some(language) = &cli.set_language {
         crate::i18n::save(language)?;
-        println!("Language / 语言: {language}");
+        println!("{}", crate::messages::ppl::language_selected(language));
         return Ok(());
     }
     let migration = seed_layout_and_theme(&env);

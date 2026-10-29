@@ -510,9 +510,7 @@ fn handle_pending_bitwarden_rename(
     match result {
         Ok(Some(message)) => app.notify(message.to_string()),
         Ok(None) => {}
-        Err(e) => app.notify_warning(format!(
-            "主机已改名；Bitwarden 名称尚未同步，下次连接会重试：{e}"
-        )),
+        Err(e) => app.notify_warning(crate::messages::ppl::host_renamed_pending(&e)),
     }
     Ok(())
 }
