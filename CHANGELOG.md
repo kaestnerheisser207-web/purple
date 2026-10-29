@@ -1,3 +1,8 @@
+## 3.31.5
+
+- Reviewed PPL integration build from 76118e45a11e5e8df4b81d8f53fe7873cb6eab0d.
+- Includes the Chinese UI and personal customizations below.
+
 ## 3.31.1 - 2026-10-24
 
 - feat: Containers show up on fish and tcsh hosts.
