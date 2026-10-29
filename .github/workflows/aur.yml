@@ -19,6 +19,7 @@ concurrency:
 
 jobs:
   resolve-version:
+    if: github.repository == 'erickochen/purple'
     runs-on: ubuntu-latest
     permissions: {}
     timeout-minutes: 5

@@ -7,6 +7,11 @@ use log::{debug, info, warn};
 
 use crate::event::AppEvent;
 
+/// This fork never downloads upstream binaries: they omit its custom features.
+const RELEASE_REPOSITORY: &str = "kaestnerheisser207-web/purple";
+const RELEASE_TAG_PREFIX: &str = "ppl-v";
+const VERSION_CACHE_FILE: &str = "last_version_check_ppl";
+
 /// Current compiled-in version from Cargo.toml.
 pub fn current_version() -> &'static str {
     env!("CARGO_PKG_VERSION")
@@ -65,7 +70,9 @@ fn extract_release_info(json: &serde_json::Value) -> Result<ReleaseInfo> {
         .as_str()
         .context("Missing tag_name in release")?;
 
-    let version = tag.strip_prefix('v').unwrap_or(tag);
+    let version = tag
+        .strip_prefix(RELEASE_TAG_PREFIX)
+        .context("Release is not a PPL fork release")?;
 
     if parse_version(version).is_none() {
         anyhow::bail!("Invalid version format: {}", version);
@@ -82,7 +89,9 @@ fn extract_release_info(json: &serde_json::Value) -> Result<ReleaseInfo> {
 /// Fetch the latest release info from GitHub.
 fn check_latest_release(agent: &ureq::Agent) -> Result<ReleaseInfo> {
     let mut resp = agent
-        .get("https://api.github.com/repos/erickochen/purple/releases/latest")
+        .get(&format!(
+            "https://api.github.com/repos/{RELEASE_REPOSITORY}/releases/latest"
+        ))
         .header("Accept", "application/vnd.github+json")
         .header("User-Agent", &format!("purple-ssh/{}", current_version()))
         .call()
@@ -151,7 +160,7 @@ fn parse_version_cache(
 fn read_cached_version(
     paths: Option<&crate::runtime::env::Paths>,
 ) -> Option<Option<CachedVersion>> {
-    let path = paths?.last_version_check();
+    let path = paths?.cache_dir().join(VERSION_CACHE_FILE);
     let content = std::fs::read_to_string(&path).ok()?;
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -180,7 +189,10 @@ fn write_version_cache(
         .as_secs();
     let hl = headline.unwrap_or("");
     let content = format!("{}\n{}\n{}\n", now, version, hl);
-    if let Err(e) = crate::fs_util::atomic_write(&paths.last_version_check(), content.as_bytes()) {
+    if let Err(e) = crate::fs_util::atomic_write(
+        &paths.cache_dir().join(VERSION_CACHE_FILE),
+        content.as_bytes(),
+    ) {
         debug!("[config] Failed to write version cache: {e}");
     }
 }
@@ -351,12 +363,12 @@ pub fn update_hint(env: &crate::runtime::env::Env) -> &'static str {
     if let Ok(exe) = std::env::current_exe() {
         let path = std::fs::canonicalize(&exe).unwrap_or(exe);
         return match detect_install_method(&path, env) {
-            InstallMethod::Homebrew => "brew upgrade erickochen/purple/purple",
-            InstallMethod::Cargo => "cargo install purple-ssh",
-            InstallMethod::CurlOrManual => "purple update",
+            InstallMethod::Homebrew => "Install the PPL fork release outside Homebrew",
+            InstallMethod::Cargo => "Install the PPL fork release outside cargo",
+            InstallMethod::CurlOrManual => "ppl update",
         };
     }
-    "purple update"
+    "ppl update"
 }
 
 /// Self-update the purple binary to the latest release.
@@ -365,7 +377,7 @@ pub fn self_update(env: &crate::runtime::env::Env) -> Result<()> {
     if !matches!(std::env::consts::OS, "macos" | "linux") {
         anyhow::bail!(
             "Self-update is available on macOS and Linux only.\n  \
-             Update via: cargo install purple-ssh"
+             Use a supported PPL fork GitHub release."
         );
     }
 
@@ -385,13 +397,13 @@ pub fn self_update(env: &crate::runtime::env::Env) -> Result<()> {
         InstallMethod::Homebrew => {
             anyhow::bail!(
                 "purple appears to be installed via Homebrew.\n  \
-                 Update with: brew upgrade erickochen/purple/purple"
+                 Install the PPL fork GitHub release outside Homebrew; do not replace it with upstream."
             );
         }
         InstallMethod::Cargo => {
             anyhow::bail!(
                 "purple appears to be installed via cargo.\n  \
-                 Update with: cargo install purple-ssh"
+                 Install the PPL fork GitHub release outside cargo; do not replace it with upstream."
             );
         }
         InstallMethod::CurlOrManual => {}
@@ -473,8 +485,7 @@ pub fn self_update(env: &crate::runtime::env::Env) -> Result<()> {
 
     let tarball_name = format!("purple-{}-{}.tar.gz", latest, target);
     let base_url = format!(
-        "https://github.com/erickochen/purple/releases/download/v{}",
-        latest
+        "https://github.com/{RELEASE_REPOSITORY}/releases/download/{RELEASE_TAG_PREFIX}{latest}"
     );
 
     // Download tarball

@@ -11,7 +11,7 @@
 
 覆盖主导航、主机/隧道/命令片段表单、操作按钮、快捷键帮助及常见提示。未收录的上游诊断、云服务商专用说明等保留英文。主机别名、命令内容、服务端输出和 SSH 配置关键词不翻译。语言选择保存在配置目录的 `language` 文件中。
 
-本机安装使用独立可执行文件与 `ppl` 启动器，Homebrew 的官方 `purple` 保留。不要通过个人版本的 `update` 命令更新，否则上游发行包会覆盖中文能力；升级本 fork 后重新编译安装。
+本机安装使用独立可执行文件与 `ppl` 启动器，Homebrew 的官方 `purple` 保留。从 PPL 3.31.2 起，`ppl update` 只读取 `kaestnerheisser207-web/purple` 的 `ppl-v…` Release，校验 SHA256 后替换当前独立二进制，不会下载上游发行包。3.31.1 的旧程序仍指向上游，首次迁移需从本 fork 的 GitHub Actions Release 安装一次，不能用旧版自更新。
 
 验证：`cargo test --lib`、`cargo test --test language_pack`、`cargo build --release --locked`。中文界面用 `ppl --lang zh-CN --demo` 可在演示数据上检查，不连接真实主机。
 
@@ -22,8 +22,26 @@
 1. 如有需要，先输入 Bitwarden 主密码解锁 CLI（首次仍需 `bw login`）。
 2. 输入该服务器的登录密码，Esc 可取消。
 3. 自动在个人密码库的 `ssh/PPL` 文件夹创建 `PPL / 主机别名`，保存用户名、密码及服务器地址。
-4. 同步并确认条目存在后，将 `bw:UUID` 回填 SSH 配置，再开始 SSH 登录。
+4. 服务端确认创建、本地回读校验成功后，将 `bw:UUID` 回填 SSH 配置，再开始 SSH 登录。建档前保留一次同步与查重，已确认创建后不再重复全库同步。
 
 这与钥匙串流程一样在 SSH 登录前保存密码，不宣称密码已通过服务器认证。登录失败可以在 Bitwarden 中修正密码；已绑定条目不会被此流程覆盖。钥匙串切换到 Bitwarden 时保留原钥匙串记录。
 
 若有同名但无法确认归属的条目，停止并要求核对；创建过程中网络中断、返回无效或配置被外部编辑，会保留仅包含身份/ID 的恢复日志，不保存服务器密码。重试先同步和查找带对应标记的条目，结果不明确时不会重复创建。后台文件浏览/容器/隧道不弹出建档输入，请先完成一次主机连接。
+
+## 改名与连接提示
+
+在 ppl 中修改已绑定主机的名称，会同步它自动创建的 Bitwarden 条目名称和归属标记；UUID、密码、TOTP 和其他字段保持不变。保存后需要解锁时在本机终端输入主密码。网络失败会显示“名称尚未同步”，仅含元数据的待处理记录保存在状态目录 `bitwarden-renames/`，下次连接重试；连续改名会合并为最新名称。没有 ppl 归属标记的外部条目不会自动改名，Bitwarden 内手工更改的名称也不会被覆盖。只改 Bitwarden 名称不影响 UUID 取密码。
+
+首次连接新主机时显示完整 SSH 指纹，由用户明确确认。后台任务和指纹变化不会自动接受。已经进入服务器的普通 shell 退出，不再因最后一条命令返回非零而报告“SSH 连接失败”；连接错误摘要不会把“指纹已保存”提示当成失败原因。
+
+## Fork 更新与 Actions 发布
+
+- `upstream-release` 是纯上游正式版分支。GitHub Actions 每天北京时间 09:17 查询上游最新稳定 Release，并快进同步；不跟随未发布的 master，不自动合入定制分支，不强制覆盖分叉历史。GitHub 定时任务可能延迟，亦可手动运行 Sync upstream release。
+- `feature/zh-cn` 是默认分支及整合发布分支。先在开发分支合并 `origin/upstream-release`，审阅新功能、补齐中文并回归 Bitwarden、SSH 和更新源；完成审核后再合入并推送 `feature/zh-cn`。
+- 每次推送自动运行 Publish PPL integration。工作流选择高于已有 `ppl-v…` 标签的版本，在仅供发布的提交中更新 Cargo.toml、Cargo.lock 和 CHANGELOG.md；不会向整合分支回写机器人提交。发布提交中的 `PPL-Source` 记录对应源码提交，同一提交重跑复用原标签。
+- 测试、格式检查、Clippy、SSH/Bitwarden 冒烟测试通过后，构建六个平台，全部成功才发布个人 Release 和 SHA256 文件。失败时没有新 Release；修复后推送，或重跑原 Actions。
+- 手动推送 `ppl-v…` 标签和手动运行 Release 工作流仍可使用。不要移动已经发布的标签。PPL 版本号独立递增，不代表已整合相同版本的上游；当前整合源码仍基于上游 v3.31.1，v3.32.0 留在同步分支待审核。
+- Homebrew Tap、AUR、上游网站、营销素材和云 API 监控仅允许原上游仓库运行，避免向个人发布分支写入未经审核的修改。
+- 首次从个人 Release 下载匹配平台的 `purple-<版本>-<平台>.tar.gz` 和 `.sha256`，核验后安装到 `~/.local/lib/purple-zh/purple`。之后打开 ppl 会检查个人 Release（缓存一小时），显示更新提示，执行 `ppl update` 安装；没有系统推送或静默安装。
+
+发行包只使用 GitHub Actions 产物。外部 `~/.purple/locales/zh-CN.json` 会优先于内置语言包；需要随发行包更新翻译时，应备份后移走旧外部包，使用程序内置包。

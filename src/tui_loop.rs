@@ -102,6 +102,7 @@ pub fn run_tui(mut app: App) -> Result<()> {
 
         lazy_cert_check(&mut app, &events_tx);
 
+        handle_pending_bitwarden_rename(&mut app, &mut terminal, &events)?;
         handle_pending_connect(&mut app, &mut terminal, &events, &mut last_config_check)?;
         handle_pending_container_exec(&mut app, &mut terminal, &events, &mut last_config_check)?;
         handle_pending_container_logs(&mut app, &events_tx);
@@ -484,6 +485,38 @@ fn lazy_cert_check(app: &mut App, events_tx: &std::sync::mpsc::Sender<AppEvent>)
     }
 }
 
+fn handle_pending_bitwarden_rename(
+    app: &mut App,
+    terminal: &mut tui::Tui,
+    events: &EventHandler,
+) -> Result<()> {
+    let Some((alias, source)) = app.ui.pending_bitwarden_rename.take() else {
+        return Ok(());
+    };
+    events.pause();
+    terminal.suspend()?;
+    let env = std::sync::Arc::clone(&app.env);
+    if let Some(token) = ensure_bw_session(&env, app.bw_session.as_deref(), Some(&source)) {
+        app.bw_session = Some(token);
+    }
+    let result = crate::bitwarden_enroll::sync_pending_rename(
+        &env,
+        app.reload.config_path(),
+        &alias,
+        app.bw_session.as_deref(),
+    );
+    terminal.enter()?;
+    events.resume();
+    match result {
+        Ok(Some(message)) => app.notify(message.to_string()),
+        Ok(None) => {}
+        Err(e) => app.notify_warning(format!(
+            "主机已改名；Bitwarden 名称尚未同步，下次连接会重试：{e}"
+        )),
+    }
+    Ok(())
+}
+
 /// Drain any queued SSH connection request. In tmux mode we open a new
 /// window and leave the TUI alive; otherwise we suspend the TUI, run ssh
 /// inline, then restore it. Vault SSH signing and askpass pre-flight
@@ -627,7 +660,9 @@ fn handle_pending_connect(
                 app.record_key_use(&alias, key_activity::now_secs());
                 app.hosts_state.invalidate_render_cache();
             }
-            if code != 0 {
+            // A shell returns its last command's status on exit. Only SSH's
+            // own failure (255) means the connection failed.
+            if connection::is_ssh_transport_failure(code) {
                 if let Some((hostname, known_hosts_path)) =
                     connection::parse_host_key_error(&cr.stderr_output)
                 {

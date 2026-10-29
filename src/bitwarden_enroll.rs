@@ -17,9 +17,11 @@ struct Cli<'a> {
 }
 impl Vault for Cli<'_> {
     fn call(&self, args: &[&str], body: Option<&Value>) -> Result<Value> {
+        let started = std::time::Instant::now();
         let mut command = self.env.command("bw");
         command
             .args(args)
+            .env("BW_NOINTERACTION", "true")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
@@ -41,6 +43,12 @@ impl Vault for Cli<'_> {
             drop(child.stdin.take());
         }
         let output = child.wait_with_output()?;
+        log::info!(
+            "[bitwarden] operation={} elapsed_ms={} success={}",
+            args.first().copied().unwrap_or("unknown"),
+            started.elapsed().as_millis(),
+            output.status.success()
+        );
         // Never log CLI output: a create response includes the password.
         ensure!(
             output.status.success(),
@@ -105,10 +113,8 @@ fn enroll(
             "主机身份已改变，请先核对 Bitwarden 中的已有记录"
         );
     }
-    ensure!(
-        vault.call(&["status"], None)?["status"] == "unlocked",
-        "Bitwarden 尚未解锁；请先 bw login，再重新连接解锁密码库"
-    );
+    // The interactive caller already checked/unlocked the vault. Sync and
+    // decrypted item lookup fail closed if that session is no longer usable.
     vault.call(&["sync"], None)?;
     let items = vault.call(&["list", "items", "--search", alias], None)?;
     let items = items.as_array().context("Bitwarden 项目列表无效")?;
@@ -202,11 +208,18 @@ fn enroll(
         journal_write(journal, &identity, "created", Some(&item_id))?;
         item_id
     };
-    // Confirm persistence and password presence before installing the binding.
-    vault.call(&["sync"], None)?;
+    // `bw create item` waits for the server response and updates the CLI's
+    // local vault. Re-read that saved item; a second full-vault sync adds a
+    // network round trip without strengthening an acknowledged create.
+    // Recovery still begins with sync above, and ambiguous creates never bind.
     let item = vault.call(&["get", "item", &item_id], None)?;
     ensure!(
         id(&item)? == item_id
+            && item["deletedDate"].is_null()
+            && item["login"]["username"] == host.user
+            && item["fields"].as_array().is_some_and(|fields| fields
+                .iter()
+                .any(|f| f["name"] == "purple_host_identity" && f["value"] == identity))
             && item["login"]["password"]
                 .as_str()
                 .is_some_and(|p| !p.is_empty()),
@@ -235,6 +248,173 @@ fn enroll(
     }
     Ok(Some(source))
 }
+#[derive(serde::Serialize, serde::Deserialize)]
+struct PendingRename {
+    config: String,
+    item_id: String,
+    old_identity: String,
+    new_identity: String,
+    old_name: String,
+    new_name: String,
+    #[serde(default)]
+    previous: Vec<(String, String)>,
+}
+
+fn host_identity(host: &crate::ssh_config::model::HostEntry) -> Result<String> {
+    Ok(serde_json::to_string(&json!([
+        host.alias,
+        host.hostname,
+        host.user,
+        host.port
+    ]))?)
+}
+
+fn rename_path(env: &Env, item_id: &str) -> Result<std::path::PathBuf> {
+    id(&json!({"id": item_id}))?;
+    Ok(env
+        .paths()
+        .context("找不到 Purple 配置目录")?
+        .state_dir()
+        .join("bitwarden-renames")
+        .join(format!("{item_id}.json")))
+}
+
+/// Queue metadata only; never copy passwords into the recovery journal.
+pub fn queue_rename(
+    env: &Env,
+    config: &Path,
+    old: &crate::ssh_config::model::HostEntry,
+    new: &crate::ssh_config::model::HostEntry,
+) -> Result<bool> {
+    if old.alias == new.alias || old.askpass != new.askpass {
+        return Ok(false);
+    }
+    let Some(item_id) = old.askpass.as_deref().and_then(|s| s.strip_prefix("bw:")) else {
+        return Ok(false);
+    };
+    if item_id.is_empty() {
+        return Ok(false);
+    }
+    let path = rename_path(env, item_id)?;
+    std::fs::create_dir_all(path.parent().context("无效同步目录")?)?;
+    let _lock = crate::fs_util::FileLock::acquire(&path.with_extension("lock"))?;
+    let mut pending = if path.exists() {
+        let mut pending: PendingRename = serde_json::from_slice(&std::fs::read(&path)?)?;
+        ensure!(
+            pending.config == config.to_string_lossy()
+                && pending.new_identity == host_identity(old)?,
+            "已有其他主机的改名待同步，请先核对 Bitwarden 绑定"
+        );
+        pending
+            .previous
+            .push((pending.new_identity.clone(), pending.new_name.clone()));
+        pending
+    } else {
+        PendingRename {
+            config: config.to_string_lossy().into_owned(),
+            item_id: item_id.into(),
+            old_identity: host_identity(old)?,
+            new_identity: String::new(),
+            old_name: format!("PPL / {}", old.alias),
+            new_name: String::new(),
+            previous: Vec::new(),
+        }
+    };
+    pending.new_identity = host_identity(new)?;
+    pending.new_name = format!("PPL / {}", new.alias);
+    crate::fs_util::write_json_pretty(&path, &pending)?;
+    Ok(true)
+}
+
+fn apply_rename(vault: &dyn Vault, pending: &PendingRename) -> Result<bool> {
+    vault.call(&["sync"], None)?;
+    let mut item = vault.call(&["get", "item", &pending.item_id], None)?;
+    ensure!(
+        id(&item)? == pending.item_id && item["deletedDate"].is_null(),
+        "Bitwarden 条目已变更或删除"
+    );
+    let marker = item["fields"].as_array().and_then(|fields| {
+        fields
+            .iter()
+            .position(|f| f["name"] == "purple_host_identity")
+    });
+    let Some(marker) = marker else {
+        return Ok(false);
+    };
+    let identity = item["fields"][marker]["value"].as_str().unwrap_or("");
+    ensure!(
+        identity == pending.old_identity
+            || identity == pending.new_identity
+            || pending.previous.iter().any(|(value, _)| value == identity),
+        "Bitwarden 条目归属不匹配，未覆盖名称"
+    );
+    if identity == pending.new_identity && item["name"] == pending.new_name {
+        return Ok(true);
+    }
+    ensure!(
+        item["name"] == pending.old_name
+            || item["name"] == pending.new_name
+            || pending
+                .previous
+                .iter()
+                .any(|(_, name)| item["name"] == *name),
+        "Bitwarden 名称已被手动修改，未覆盖；请核对待同步记录"
+    );
+    item["name"] = json!(pending.new_name);
+    item["fields"][marker]["value"] = json!(pending.new_identity);
+    // Edit the freshly synced complete item, preserving every credential field.
+    vault.call(&["edit", "item", &pending.item_id], Some(&item))?;
+    let saved = vault.call(&["get", "item", &pending.item_id], None)?;
+    ensure!(
+        id(&saved)? == pending.item_id
+            && saved["name"] == pending.new_name
+            && saved["login"] == item["login"]
+            && saved["fields"] == item["fields"],
+        "Bitwarden 改名回读验证失败"
+    );
+    Ok(true)
+}
+
+/// Retry only explicitly queued metadata changes, after a fresh binding check.
+pub fn sync_pending_rename(
+    env: &Env,
+    config: &Path,
+    alias: &str,
+    session: Option<&str>,
+) -> Result<Option<&'static str>> {
+    let host = SshConfigFile::parse(config)?
+        .host_entries()
+        .into_iter()
+        .find(|h| h.alias == alias)
+        .context("主机已不存在")?;
+    let Some(item_id) = host.askpass.as_deref().and_then(|s| s.strip_prefix("bw:")) else {
+        return Ok(None);
+    };
+    if item_id.is_empty() {
+        return Ok(None);
+    }
+    let path = rename_path(env, item_id)?;
+    if !path.exists() {
+        return Ok(None);
+    }
+    let _lock = crate::fs_util::FileLock::acquire(&path.with_extension("lock"))?;
+    let pending: PendingRename = serde_json::from_slice(&std::fs::read(&path)?)?;
+    ensure!(
+        pending.item_id == item_id
+            && pending.config == config.to_string_lossy()
+            && pending.new_identity == host_identity(&host)?,
+        "本地主机绑定已改变，未同步 Bitwarden 名称"
+    );
+    eprintln!("正在同步 Bitwarden 条目名称…");
+    let managed = apply_rename(&Cli { env, session }, &pending)?;
+    std::fs::remove_file(path)?;
+    Ok(Some(if managed {
+        "Bitwarden 名称已同步"
+    } else {
+        "此条目不是 ppl 自动创建的，已保留 Bitwarden 原名称"
+    }))
+}
+
 /// Called only from interactive connection paths, after the normal vault unlock.
 pub fn prepare(
     env: &Env,
@@ -244,6 +424,13 @@ pub fn prepare(
     session: Option<&str>,
 ) -> Result<bool> {
     if !source.as_deref().is_some_and(|s| s.trim() == "bw:") {
+        if source.as_deref().is_some_and(|s| s.starts_with("bw:")) {
+            match sync_pending_rename(env, config, alias, session) {
+                Ok(Some(message)) => eprintln!("{message}"),
+                Err(e) => eprintln!("Bitwarden 名称尚未同步，下次连接会重试：{e}"),
+                Ok(None) => {}
+            }
+        }
         return Ok(true);
     }
     let paths = env.paths().context("找不到 Purple 配置目录")?;
@@ -256,6 +443,7 @@ pub fn prepare(
         .join("bitwarden-enrollment")
         .join(format!("{key}.json"));
     let vault = Cli { env, session };
+    eprintln!("正在同步 Bitwarden 并检查已有条目…");
     let result = enroll(&vault, config, alias, &journal, || {
         eprintln!("将为 {alias} 在 Bitwarden 的 ssh/PPL 文件夹保存登录密码。");
         crate::cli::prompt_hidden_input("服务器登录密码（Esc 取消）：")
@@ -315,7 +503,6 @@ mod tests {
     }
     fn initial(items: Value) -> Vec<(&'static str, Result<Value>)> {
         vec![
-            ("status", Ok(json!({"status":"unlocked"}))),
             ("sync", Ok(Value::Null)),
             ("list items --search test", Ok(items)),
         ]
@@ -328,7 +515,6 @@ mod tests {
         steps.extend([
             ("list folders", Ok(json!([{"id":FOLDER,"name":"ssh/PPL"}]))),
             ("create item", Ok(item())),
-            ("sync", Ok(Value::Null)),
             ("get item 11111111-1111-4111-8111-111111111111", Ok(item())),
         ]);
         steps
@@ -416,10 +602,7 @@ mod tests {
         assert!(enroll(&retry, &c, "test", &j, || panic!("no replay")).is_err());
         assert_eq!(before, std::fs::read(&c).unwrap());
         let mut recovered = initial(json!([item()]));
-        recovered.extend([
-            ("sync", Ok(Value::Null)),
-            ("get item 11111111-1111-4111-8111-111111111111", Ok(item())),
-        ]);
+        recovered.extend([("get item 11111111-1111-4111-8111-111111111111", Ok(item()))]);
         assert!(
             enroll(&Fake::new(recovered), &c, "test", &j, || panic!(
                 "already stored"
@@ -454,7 +637,13 @@ mod tests {
             .unwrap_or_else(|e| e.into_inner());
         crate::demo_flag::disable();
         let (_d, c, j) = setup();
-        let vault = Fake::new(vec![("status", Ok(json!({"status":"locked"})))]);
+        let vault = Fake::new(vec![
+            ("sync", Ok(Value::Null)),
+            (
+                "list items --search test",
+                Err(anyhow::anyhow!("vault locked")),
+            ),
+        ]);
         assert!(enroll(&vault, &c, "test", &j, || panic!("locked")).is_err());
         assert!(vault.bodies.borrow().is_empty());
     }
@@ -467,7 +656,7 @@ mod tests {
         let (_d, c, j) = setup();
         let before = std::fs::read(&c).unwrap();
         let mut steps = create_steps();
-        steps.truncate(5);
+        steps.clear();
         steps.push(("sync", Err(anyhow::anyhow!("offline"))));
         assert!(
             enroll(&Fake::new(steps), &c, "test", &j, || Ok(Some(
@@ -476,8 +665,157 @@ mod tests {
             .is_err()
         );
         assert_eq!(before, std::fs::read(c).unwrap());
-        assert!(j.exists());
+        assert!(!j.exists());
     }
+    #[test]
+    fn invalid_readback_preserves_recovery_without_binding() {
+        let _guard = crate::demo_flag::GLOBAL_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        crate::demo_flag::disable();
+        for field in ["password", "username", "identity"] {
+            let (_d, c, j) = setup();
+            let before = std::fs::read(&c).unwrap();
+            let mut bad = item();
+            match field {
+                "password" => bad["login"]["password"] = json!(""),
+                "username" => bad["login"]["username"] = json!("other"),
+                _ => bad["fields"] = json!([]),
+            }
+            let mut steps = create_steps();
+            steps.last_mut().unwrap().1 = Ok(bad);
+            assert!(
+                enroll(&Fake::new(steps), &c, "test", &j, || Ok(Some(
+                    "secret-test-value".into()
+                )))
+                .is_err()
+            );
+            assert_eq!(before, std::fs::read(&c).unwrap());
+            assert!(j.exists());
+        }
+    }
+
+    fn pending_rename() -> PendingRename {
+        PendingRename {
+            config: "/tmp/test-config".into(),
+            item_id: ITEM.into(),
+            old_identity: item()["fields"][0]["value"].as_str().unwrap().into(),
+            new_identity: "[\"renamed\",\"example.test\",\"root\",22]".into(),
+            old_name: "PPL / test".into(),
+            new_name: "PPL / renamed".into(),
+            previous: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn rename_preserves_credentials_and_retries_idempotently() {
+        let pending = pending_rename();
+        let mut before = item();
+        before["login"]["totp"] = json!("synthetic-totp");
+        before["notes"] = json!("keep this note");
+        let mut after = before.clone();
+        after["name"] = json!(pending.new_name);
+        after["fields"][0]["value"] = json!(pending.new_identity);
+        let vault = Fake::new(vec![
+            ("sync", Ok(Value::Null)),
+            (
+                "get item 11111111-1111-4111-8111-111111111111",
+                Ok(before.clone()),
+            ),
+            (
+                "edit item 11111111-1111-4111-8111-111111111111",
+                Ok(after.clone()),
+            ),
+            (
+                "get item 11111111-1111-4111-8111-111111111111",
+                Ok(after.clone()),
+            ),
+        ]);
+        assert!(apply_rename(&vault, &pending).unwrap());
+        let written = &vault.bodies.borrow()[0];
+        assert_eq!(written["login"], before["login"]);
+        assert_eq!(written["notes"], before["notes"]);
+        let retry = Fake::new(vec![
+            ("sync", Ok(Value::Null)),
+            ("get item 11111111-1111-4111-8111-111111111111", Ok(after)),
+        ]);
+        assert!(apply_rename(&retry, &pending).unwrap());
+        assert!(retry.bodies.borrow().is_empty());
+    }
+
+    #[test]
+    fn chained_rename_accepts_an_ambiguous_intermediate_save() {
+        let mut pending = pending_rename();
+        let intermediate = "[\"middle\",\"example.test\",\"root\",22]";
+        pending
+            .previous
+            .push((intermediate.into(), "PPL / middle".into()));
+        let mut before = item();
+        before["name"] = json!("PPL / middle");
+        before["fields"][0]["value"] = json!(intermediate);
+        let mut after = before.clone();
+        after["name"] = json!(pending.new_name);
+        after["fields"][0]["value"] = json!(pending.new_identity);
+        let vault = Fake::new(vec![
+            ("sync", Ok(Value::Null)),
+            ("get item 11111111-1111-4111-8111-111111111111", Ok(before)),
+            (
+                "edit item 11111111-1111-4111-8111-111111111111",
+                Ok(after.clone()),
+            ),
+            ("get item 11111111-1111-4111-8111-111111111111", Ok(after)),
+        ]);
+        assert!(apply_rename(&vault, &pending).unwrap());
+    }
+
+    #[test]
+    fn rename_never_overwrites_foreign_or_manually_renamed_items() {
+        for kind in ["unmanaged", "foreign", "manual"] {
+            let mut value = item();
+            match kind {
+                "unmanaged" => value["fields"] = json!([]),
+                "foreign" => value["fields"][0]["value"] = json!("unrelated"),
+                _ => value["name"] = json!("My manual name"),
+            }
+            let vault = Fake::new(vec![
+                ("sync", Ok(Value::Null)),
+                ("get item 11111111-1111-4111-8111-111111111111", Ok(value)),
+            ]);
+            let result = apply_rename(&vault, &pending_rename());
+            if kind == "unmanaged" {
+                assert!(!result.unwrap());
+            } else {
+                assert!(result.is_err());
+            }
+            assert!(vault.bodies.borrow().is_empty());
+        }
+    }
+
+    #[test]
+    fn pending_rename_coalesces_and_contains_no_password() {
+        let (dir, config, _) = setup();
+        let env = Env::for_test(dir.path());
+        let mut old = SshConfigFile::parse(&config)
+            .unwrap()
+            .host_entries()
+            .remove(0);
+        old.askpass = Some(format!("bw:{ITEM}"));
+        let mut next = old.clone();
+        next.alias = "second".into();
+        assert!(queue_rename(&env, &config, &old, &next).unwrap());
+        let mut latest = next.clone();
+        latest.alias = "third".into();
+        assert!(queue_rename(&env, &config, &next, &latest).unwrap());
+        let raw = std::fs::read_to_string(rename_path(&env, ITEM).unwrap()).unwrap();
+        let pending: PendingRename = serde_json::from_str(&raw).unwrap();
+        assert_eq!(pending.old_name, "PPL / test");
+        assert_eq!(pending.new_name, "PPL / third");
+        assert!(!raw.contains("password"));
+        let mut other = old.clone();
+        other.alias = "other".into();
+        assert!(queue_rename(&env, &config, &other, &latest).is_err());
+    }
+
     #[test]
     fn invalid_item_id_never_becomes_config() {
         assert!(id(&json!({"id":"x\nHost evil"})).is_err());

@@ -1,0 +1,28 @@
+name: Publish PPL integration
+on:
+  push:
+    branches: [feature/zh-cn]
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: ppl-publish
+  cancel-in-progress: false
+jobs:
+  prepare:
+    if: github.repository == 'kaestnerheisser207-web/purple' && github.ref == 'refs/heads/feature/zh-cn'
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.prepare.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Prepare immutable release source
+        id: prepare
+        run: python3 scripts/release/prepare.py
+  release:
+    needs: prepare
+    uses: ./.github/workflows/release.yml
+    with:
+      tag: ${{ needs.prepare.outputs.tag }}

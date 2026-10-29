@@ -15,6 +15,7 @@ permissions:
 
 jobs:
   check-changelogs:
+    if: github.repository == 'erickochen/purple'
     name: Check provider changelogs
     runs-on: ubuntu-22.04
     steps:

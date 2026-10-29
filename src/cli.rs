@@ -478,6 +478,10 @@ fn resolve_ssm_mode(raw: Option<&str>) -> providers::aws_ssm::SsmMode {
     }
 }
 
+fn print_localized_notice(message: &'static str) {
+    eprintln!("{}", crate::i18n::text(message));
+}
+
 pub fn handle_provider_command(
     env: &crate::runtime::env::Env,
     command: ProviderCommands,
@@ -522,24 +526,15 @@ pub fn handle_provider_command(
             let mut verify_tls = verify_tls;
             if !kind.is_some_and(ProviderKind::requires_url) {
                 if url.is_some() {
-                    eprintln!(
-                        "{}",
-                        crate::i18n::text(crate::messages::cli::WARN_URL_NOT_USED)
-                    );
+                    print_localized_notice(crate::messages::cli::WARN_URL_NOT_USED);
                     url = None;
                 }
                 if no_verify_tls {
-                    eprintln!(
-                        "{}",
-                        crate::i18n::text(crate::messages::cli::WARN_NO_VERIFY_TLS_NOT_USED)
-                    );
+                    print_localized_notice(crate::messages::cli::WARN_NO_VERIFY_TLS_NOT_USED);
                     no_verify_tls = false;
                 }
                 if verify_tls {
-                    eprintln!(
-                        "{}",
-                        crate::i18n::text(crate::messages::cli::WARN_VERIFY_TLS_NOT_USED)
-                    );
+                    print_localized_notice(crate::messages::cli::WARN_VERIFY_TLS_NOT_USED);
                     verify_tls = false;
                 }
             }
@@ -547,45 +542,27 @@ pub fn handle_provider_command(
             // --project is GCP-only
             let mut ssm = ssm;
             if kind != Some(ProviderKind::Aws) && profile.is_some() {
-                eprintln!(
-                    "{}",
-                    crate::i18n::text(crate::messages::cli::WARN_PROFILE_NOT_USED)
-                );
+                print_localized_notice(crate::messages::cli::WARN_PROFILE_NOT_USED);
                 profile = None;
             }
             if kind != Some(ProviderKind::Aws) && ssm.is_some() {
-                eprintln!(
-                    "{}",
-                    crate::i18n::text(crate::messages::cli::WARN_SSM_NOT_USED)
-                );
+                print_localized_notice(crate::messages::cli::WARN_SSM_NOT_USED);
                 ssm = None;
             }
             if !kind.is_some_and(ProviderKind::accepts_cli_regions) && regions.is_some() {
-                eprintln!(
-                    "{}",
-                    crate::i18n::text(crate::messages::cli::WARN_REGIONS_NOT_USED)
-                );
+                print_localized_notice(crate::messages::cli::WARN_REGIONS_NOT_USED);
                 regions = None;
             }
             if kind != Some(ProviderKind::Gcp) && project.is_some() {
-                eprintln!(
-                    "{}",
-                    crate::i18n::text(crate::messages::cli::WARN_PROJECT_NOT_USED)
-                );
+                print_localized_notice(crate::messages::cli::WARN_PROJECT_NOT_USED);
                 project = None;
             }
             if kind != Some(ProviderKind::Oracle) && compartment.is_some() {
-                eprintln!(
-                    "{}",
-                    crate::i18n::text(crate::messages::cli::WARN_COMPARTMENT_NOT_USED)
-                );
+                print_localized_notice(crate::messages::cli::WARN_COMPARTMENT_NOT_USED);
                 compartment = None;
             }
             if kind != Some(ProviderKind::NetBox) && filter.is_some() {
-                eprintln!(
-                    "{}",
-                    crate::i18n::text(crate::messages::cli::WARN_FILTER_NOT_USED)
-                );
+                print_localized_notice(crate::messages::cli::WARN_FILTER_NOT_USED);
                 filter = None;
             }
 
@@ -638,10 +615,7 @@ pub fn handle_provider_command(
                 }
                 let u = url.as_deref().unwrap();
                 if !u.to_ascii_lowercase().starts_with("https://") {
-                    eprintln!(
-                        "{}",
-                        crate::i18n::text(crate::messages::cli::PROVIDER_URL_REQUIRES_HTTPS)
-                    );
+                    print_localized_notice(crate::messages::cli::PROVIDER_URL_REQUIRES_HTTPS);
                     std::process::exit(1);
                 }
             }
@@ -689,15 +663,9 @@ pub fn handle_provider_command(
 
             if token.trim().is_empty() && !token_optional {
                 if kind == Some(ProviderKind::Gcp) {
-                    eprintln!(
-                        "{}",
-                        crate::i18n::text(crate::messages::cli::PROVIDER_TOKEN_REQUIRED_GCP)
-                    );
+                    print_localized_notice(crate::messages::cli::PROVIDER_TOKEN_REQUIRED_GCP);
                 } else if kind == Some(ProviderKind::Oracle) {
-                    eprintln!(
-                        "{}",
-                        crate::i18n::text(crate::messages::cli::PROVIDER_TOKEN_REQUIRED_ORACLE)
-                    );
+                    print_localized_notice(crate::messages::cli::PROVIDER_TOKEN_REQUIRED_ORACLE);
                 } else {
                     eprintln!(
                         "{}",
@@ -720,10 +688,7 @@ pub fn handle_provider_command(
                 None => p.short_label().to_string(),
             });
             if crate::ssh_config::model::is_host_pattern(&alias_prefix) {
-                eprintln!(
-                    "{}",
-                    crate::i18n::text(crate::messages::cli::ALIAS_PREFIX_INVALID)
-                );
+                print_localized_notice(crate::messages::cli::ALIAS_PREFIX_INVALID);
                 std::process::exit(1);
             }
 
@@ -755,10 +720,7 @@ pub fn handle_provider_command(
                 }
             }
             if user.contains(char::is_whitespace) {
-                eprintln!(
-                    "{}",
-                    crate::i18n::text(crate::messages::cli::USER_WHITESPACE)
-                );
+                print_localized_notice(crate::messages::cli::USER_WHITESPACE);
                 std::process::exit(1);
             }
 
@@ -796,25 +758,16 @@ pub fn handle_provider_command(
 
             // AWS/Scaleway/Azure requires at least one region/zone/subscription
             if kind == Some(ProviderKind::Aws) && resolved_regions.trim().is_empty() {
-                eprintln!(
-                    "{}",
-                    crate::i18n::text(crate::messages::cli::AWS_REGIONS_REQUIRED)
-                );
+                print_localized_notice(crate::messages::cli::AWS_REGIONS_REQUIRED);
                 std::process::exit(1);
             }
             if kind == Some(ProviderKind::Scaleway) && resolved_regions.trim().is_empty() {
-                eprintln!(
-                    "{}",
-                    crate::i18n::text(crate::messages::cli::SCALEWAY_REGIONS_REQUIRED)
-                );
+                print_localized_notice(crate::messages::cli::SCALEWAY_REGIONS_REQUIRED);
                 std::process::exit(1);
             }
             if kind == Some(ProviderKind::Azure) {
                 if resolved_regions.trim().is_empty() {
-                    eprintln!(
-                        "{}",
-                        crate::i18n::text(crate::messages::cli::AZURE_REGIONS_REQUIRED)
-                    );
+                    print_localized_notice(crate::messages::cli::AZURE_REGIONS_REQUIRED);
                     std::process::exit(1);
                 }
                 for sub in resolved_regions
@@ -833,18 +786,12 @@ pub fn handle_provider_command(
             }
             // GCP requires --project
             if kind == Some(ProviderKind::Gcp) && resolved_project.trim().is_empty() {
-                eprintln!(
-                    "{}",
-                    crate::i18n::text(crate::messages::cli::GCP_PROJECT_REQUIRED)
-                );
+                print_localized_notice(crate::messages::cli::GCP_PROJECT_REQUIRED);
                 std::process::exit(1);
             }
             // Oracle requires --compartment
             if kind == Some(ProviderKind::Oracle) && resolved_compartment.trim().is_empty() {
-                eprintln!(
-                    "{}",
-                    crate::i18n::text(crate::messages::cli::ORACLE_COMPARTMENT_REQUIRED)
-                );
+                print_localized_notice(crate::messages::cli::ORACLE_COMPARTMENT_REQUIRED);
                 std::process::exit(1);
             }
 
@@ -921,10 +868,7 @@ pub fn handle_provider_command(
                 );
             }
             if ssm_without_profile {
-                eprintln!(
-                    "{}",
-                    crate::i18n::text(crate::messages::cli::AWS_SSM_WITHOUT_PROFILE)
-                );
+                print_localized_notice(crate::messages::cli::AWS_SSM_WITHOUT_PROFILE);
             }
             Ok(())
         }

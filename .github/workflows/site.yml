@@ -28,7 +28,7 @@ jobs:
     runs-on: ubuntu-latest
     name: Deploy to Bunny Edge Scripting
     needs: build
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' && github.repository == 'erickochen/purple'
     steps:
       - uses: actions/checkout@v7
 

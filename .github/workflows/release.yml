@@ -1,40 +1,77 @@
-name: Release
+name: PPL Release
 
 on:
+  workflow_call:
+    inputs:
+      tag:
+        required: true
+        type: string
   push:
     tags:
-      - "v[0-9]+.[0-9]+.[0-9]+"
+      - "ppl-v*"
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag (e.g., v0.2.0)"
+        description: "PPL release tag (e.g., ppl-v3.31.2)"
         required: true
 
 permissions:
-  contents: write
+  contents: read
+
+env:
+  PPL_RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+
+concurrency:
+  group: ppl-release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
 
 jobs:
   check:
     name: Pre-release checks
+    if: github.repository == 'kaestnerheisser207-web/purple'
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ github.event.inputs.tag || github.ref }}
+          ref: refs/tags/${{ env.PPL_RELEASE_TAG }}
+
+      - name: Verify fork release tag and version
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$PPL_RELEASE_TAG" =~ ^ppl-v[0-9]+\.[0-9]+\.[0-9]+$ ]] || exit 1
+          python3 - <<'PYCODE'
+          import os, pathlib, re
+          text = pathlib.Path('Cargo.toml').read_text()
+          version = re.search(r'^version = "([^"]+)"', text, re.M).group(1)
+          assert os.environ['PPL_RELEASE_TAG'] == 'ppl-v' + version
+          assert 'repository = "https://github.com/kaestnerheisser207-web/purple"' in text
+          PYCODE
 
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: "1.95"
-          components: clippy
+          components: clippy, rustfmt
 
       - name: Install Linux dependencies
-        run: sudo apt-get update && sudo apt-get install -y pkg-config libssl-dev
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libssl-dev openssh-server
+
+      - name: Check formatting
+        run: cargo fmt --check
 
       - name: Run tests
         run: cargo test --locked
 
       - name: Run clippy
         run: cargo clippy --locked --all-targets -- -D warnings
+
+      - name: Run PPL enrollment and terminal regressions
+        run: |
+          cargo build --locked
+          python3 tests/bitwarden_enroll_smoke.py target/debug/purple
+          python3 tests/ssh_exit_tui_smoke.py target/debug/purple
+          sudo mkdir -p /run/sshd
+          python3 tests/host_key_askpass_smoke.py target/debug/purple
 
   build:
     name: Build ${{ matrix.target }}
@@ -60,13 +97,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
         with:
-          ref: ${{ github.event.inputs.tag || github.ref }}
+          ref: refs/tags/${{ env.PPL_RELEASE_TAG }}
 
       - name: Derive version
         id: version
         run: |
-          TAG="${{ github.event.inputs.tag || github.ref_name }}"
-          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+          TAG="$PPL_RELEASE_TAG"
+          echo "version=${TAG#ppl-v}" >> "$GITHUB_OUTPUT"
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
 
       - name: Verify version matches tag
@@ -195,19 +232,21 @@ jobs:
 
   release:
     name: Create GitHub Release
+    permissions:
+      contents: write
     needs: build
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v7
         with:
-          ref: ${{ github.event.inputs.tag || github.ref }}
+          ref: refs/tags/${{ env.PPL_RELEASE_TAG }}
 
       - name: Derive tag
         id: version
         run: |
-          TAG="${{ github.event.inputs.tag || github.ref_name }}"
-          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+          TAG="$PPL_RELEASE_TAG"
+          echo "version=${TAG#ppl-v}" >> "$GITHUB_OUTPUT"
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
 
       - name: Extract changelog
@@ -233,6 +272,8 @@ jobs:
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ steps.version.outputs.tag }}
+          prerelease: false
+          make_latest: true
           body_path: /tmp/release_notes.md
           files: |
             purple-*/*.tar.gz
@@ -241,14 +282,15 @@ jobs:
 
   update-homebrew:
     name: Update Homebrew Tap
+    if: github.repository == 'erickochen/purple'
     needs: release
     runs-on: ubuntu-latest
     steps:
       - name: Get version from tag
         id: version
         run: |
-          TAG="${{ github.event.inputs.tag || github.ref_name }}"
-          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+          TAG="$PPL_RELEASE_TAG"
+          echo "version=${TAG#ppl-v}" >> "$GITHUB_OUTPUT"
 
       - name: Download release tarballs and compute SHA256
         id: sha
@@ -316,6 +358,7 @@ jobs:
 
   trigger-aur:
     name: Trigger AUR publish
+    if: github.repository == 'erickochen/purple'
     # Releases created with GITHUB_TOKEN do not fire `release: published` on
     # other workflows, so aur.yml never runs from the implicit chain. Dispatch
     # it explicitly; workflow_dispatch is exempt from that restriction.
@@ -331,7 +374,7 @@ jobs:
           REF_NAME: ${{ github.ref_name }}
         run: |
           TAG="${INPUT_TAG:-$REF_NAME}"
-          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#ppl-v}" >> "$GITHUB_OUTPUT"
 
       - name: Dispatch aur.yml
         env:

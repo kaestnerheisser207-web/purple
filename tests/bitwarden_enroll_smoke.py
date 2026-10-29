@@ -1,17 +1,18 @@
 #!/usr/bin/env python3
 """Offline PTY end-to-end test: real Purple, fake bw/SSH, synthetic credentials."""
-import json, os, pathlib, pty, select, subprocess, sys, tempfile, time
+import json, os, pathlib, pty, select, subprocess, sys, tempfile, termios, time
 binary = str(pathlib.Path(sys.argv[1]).resolve())
 with tempfile.TemporaryDirectory(prefix='purple-bw-smoke-') as temporary:
     root = pathlib.Path(temporary)
     mock = root/'bin'; mock.mkdir()
     state = root/'vault.json'
-    state.write_text(json.dumps({'items': [], 'creates': 0}))
+    state.write_text(json.dumps({'items': [], 'creates': 0, 'calls': []}))
     bw = mock/'bw'
     bw.write_text('''#!/usr/bin/env python3
 import os,json,sys,base64
 from pathlib import Path
 p=Path(os.environ['SMOKE_VAULT']);s=json.loads(p.read_text());a=sys.argv[1:]
+s['calls'].append(a[:2]);p.write_text(json.dumps(s))
 if a==['status']: print(json.dumps({'status':'unlocked'}))
 elif a==['sync']: print('Sync complete')
 elif a[:2]==['list','items']: print(json.dumps(s['items']))
@@ -41,16 +42,20 @@ print('SMOKE_AUTH_OK')
                 except OSError:break
                 if not chunk:break
                 data+=chunk
-                if '服务器登录密码'.encode() in data and not sent:
-                    assert attempt==0,'second connection must reuse UUID'
-                    os.write(master,b'test-only-password\r');sent=True
+            if '服务器登录密码'.encode() in data and not sent and not (termios.tcgetattr(master)[3] & termios.ECHO):
+                assert attempt==0,'second connection must reuse UUID'
+                os.write(master,b'test-only-password\r');sent=True
             if p.poll() is not None:break
-        if p.poll() is None:p.kill()
-        p.wait();os.close(master)
+        try:p.wait(timeout=1)
+        except subprocess.TimeoutExpired:p.kill();p.wait()
+        os.close(master)
         assert p.returncode==0, data.decode(errors='replace')
         assert b'SMOKE_AUTH_OK' in data, data.decode(errors='replace')
         assert b'test-only-password' not in data,'password leaked to terminal'
     result=json.loads(state.read_text());assert result['creates']==1
+    assert result['calls'].count(['sync'])==1, result['calls']
+    assert result['calls'].count(['status'])==2, result['calls']
+    assert result['calls'].count(['get','password'])==2, result['calls']
     assert 'bw:11111111-1111-4111-8111-111111111111' in config.read_text()
     for path in (root/'purple').rglob('*'):
         if path.is_file():assert b'test-only-password' not in path.read_bytes(),str(path)

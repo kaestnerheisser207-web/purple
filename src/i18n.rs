@@ -29,18 +29,16 @@ pub fn initialize(language: Option<&str>, path: Option<PathBuf>) -> anyhow::Resu
         .get()
         .and_then(|p| p.parent())
         .map(|p| p.join("locales/zh-CN.json"))
+        && path.exists()
     {
-        if path.exists() {
-            let map: HashMap<String, String> =
-                serde_json::from_str(&std::fs::read_to_string(path)?)?;
-            for (key, value) in &map {
-                anyhow::ensure!(
-                    key.matches("{}").count() == value.matches("{}").count(),
-                    "Invalid language placeholder: {key}"
-                );
-            }
-            let _ = CATALOG.set(map);
+        let map: HashMap<String, String> = serde_json::from_str(&std::fs::read_to_string(path)?)?;
+        for (key, value) in &map {
+            anyhow::ensure!(
+                key.matches("{}").count() == value.matches("{}").count(),
+                "Invalid language placeholder: {key}"
+            );
         }
+        let _ = CATALOG.set(map);
     }
     let saved = LANGUAGE_FILE
         .get()

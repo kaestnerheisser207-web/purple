@@ -204,7 +204,11 @@ fn password_picker_key(ctx: &mut PickerCtx, key: KeyEvent) {
                     ctx.forms
                         .host_mut()
                         .apply_password_source(source.value.to_string(), true);
-                    ctx.notify(crate::messages::complete_path(source.label));
+                    if source.value == "bw:" {
+                        ctx.notify(crate::i18n::text("bw: = save on first login"));
+                    } else {
+                        ctx.notify(crate::messages::complete_path(source.label));
+                    }
                     needs_more_input = true;
                 } else {
                     ctx.forms

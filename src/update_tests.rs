@@ -47,16 +47,39 @@ fn test_is_newer_invalid() {
 
 #[test]
 fn test_extract_version_with_v_prefix() {
-    let json = serde_json::json!({"tag_name": "v1.6.0"});
+    let json = serde_json::json!({"tag_name": "ppl-v1.6.0"});
     let info = extract_release_info(&json).unwrap();
     assert_eq!(info.version, "1.6.0");
 }
 
 #[test]
-fn test_extract_version_without_prefix() {
-    let json = serde_json::json!({"tag_name": "1.6.0"});
-    let info = extract_release_info(&json).unwrap();
-    assert_eq!(info.version, "1.6.0");
+fn test_reject_upstream_and_unprefixed_releases() {
+    for tag in ["v1.6.0", "1.6.0"] {
+        assert!(extract_release_info(&serde_json::json!({"tag_name": tag})).is_err());
+    }
+}
+
+#[test]
+fn upstream_cache_cannot_trigger_a_fork_update() {
+    let temp = tempfile::tempdir().unwrap();
+    let env = crate::runtime::env::Env::for_test(temp.path());
+    let paths = env.paths().unwrap();
+    std::fs::create_dir_all(paths.cache_dir()).unwrap();
+    std::fs::write(
+        paths.last_version_check(),
+        format!("{}\n999.0.0\nupstream\n", now_secs()),
+    )
+    .unwrap();
+    assert_eq!(read_cached_version(Some(paths)), None);
+    write_version_cache("999.0.0", Some("fork"), Some(paths));
+    assert_eq!(
+        read_cached_version(Some(paths))
+            .unwrap()
+            .unwrap()
+            .headline
+            .as_deref(),
+        Some("fork")
+    );
 }
 
 #[test]
@@ -67,13 +90,13 @@ fn test_extract_version_missing_tag() {
 
 #[test]
 fn test_extract_version_invalid_format() {
-    let json = serde_json::json!({"tag_name": "v1.2.3-rc1"});
+    let json = serde_json::json!({"tag_name": "ppl-v1.2.3-rc1"});
     assert!(extract_release_info(&json).is_err());
 }
 
 #[test]
 fn test_extract_release_notes() {
-    let json = serde_json::json!({"tag_name": "v1.6.0", "body": "Bug fixes and improvements"});
+    let json = serde_json::json!({"tag_name": "ppl-v1.6.0", "body": "Bug fixes and improvements"});
     let info = extract_release_info(&json).unwrap();
     assert_eq!(info.version, "1.6.0");
     assert_eq!(info.notes, "Bug fixes and improvements");
@@ -81,7 +104,7 @@ fn test_extract_release_notes() {
 
 #[test]
 fn test_extract_release_notes_missing_body() {
-    let json = serde_json::json!({"tag_name": "v1.6.0"});
+    let json = serde_json::json!({"tag_name": "ppl-v1.6.0"});
     let info = extract_release_info(&json).unwrap();
     assert_eq!(info.notes, "");
 }

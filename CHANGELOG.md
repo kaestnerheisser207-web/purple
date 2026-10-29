@@ -4,6 +4,15 @@
 - feat: Listing and refresh work just like on bash and zsh.
 - Thanks to @Parsifa1 for fixing this in #165
 
+## 3.31.2
+
+- PPL fork: restore explicit SSH host fingerprint confirmation with password managers.
+- Avoid false connection errors when an interactive remote shell exits nonzero; keep real SSH failures visible.
+- Reduce redundant Bitwarden enrollment calls while retaining duplicate prevention and verified binding.
+- Synchronize names for PPL-managed Bitwarden items, preserving UUIDs and credentials with durable retry metadata.
+- Isolate update checks and downloads to the personal fork's ppl-v releases; build release artifacts with GitHub Actions.
+
+
 ## 3.31.0 - 2026-10-21
 
 - feat: Use your YubiKey with a PIN everywhere in purple.
