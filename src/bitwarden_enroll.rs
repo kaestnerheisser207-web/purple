@@ -423,7 +423,7 @@ pub fn prepare(
     source: &mut Option<String>,
     session: Option<&str>,
 ) -> Result<bool> {
-    if !source.as_deref().is_some_and(|s| s.trim() == "bw:") {
+    if source.as_deref().is_none_or(|s| s.trim() != "bw:") {
         if source.as_deref().is_some_and(|s| s.starts_with("bw:")) {
             match sync_pending_rename(env, config, alias, session) {
                 Ok(Some(message)) => eprintln!("{message}"),
